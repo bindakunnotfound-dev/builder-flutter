@@ -1,25 +1,20 @@
-# Flutter Cloud Builder (build.yml)
+# Excellent Mirror — Remote Pterodactyl build
 
-Aplikasi Flutter Android untuk mengunggah ZIP proyek ke GitHub, memicu GitHub Actions, memantau run, dan mengambil APK/artifact diagnostik.
+USB/ADB transport has been removed. The Flutter/Android build workflow itself is unchanged, including `flutter build apk --release --split-per-abi`.
 
-## Workflow
+The APK:
+1. asks for Android screen-capture permission;
+2. fetches `server.json` from the specified GitHub repository;
+3. connects directly to the configured host over WebSocket;
+4. sends the existing H.264 packets to the Node.js server;
+5. if the connection times out/disconnects, refreshes `server.json` and retries.
 
-Workflow canonical: `.github/workflows/build.yml` (folder `workflows` wajib plural).
+The `server/` folder is a Node.js service intended to run in a Pterodactyl Node.js server. It also includes a browser WebCodecs viewer so the old Chromebook-local viewer is no longer required.
 
-Pemicu:
-- `workflow_dispatch`: dipanggil aplikasi dengan `source_path` dan `build_id`.
-- `push` ke branch `main` jika ZIP baru masuk ke `build-inputs/*.zip`; workflow akan memilih ZIP terbaru jika input tidak diberikan.
+The current GitHub configuration is:
+https://raw.githubusercontent.com/vinszzr-lang/Project-Reskin-Gue/main/server.json
 
-## Konfigurasi
 
-Edit `assets/github_config.json` sebelum build APK untuk owner/repository/branch. Token tidak diisi di repository. APK membaca token dari aset JSON saat runtime, jadi jika mengedit APK melalui MT Manager setelah build, sign ulang APK sebelum instalasi. Token di APK dapat diekstrak; gunakan token berumur pendek dengan izin repository minimum.
+## Build APK (split per ABI)
 
-Token untuk API perlu izin Contents: Read and write serta Actions: Read and write (dan Workflows: write jika mengubah file workflow melalui API).
-
-## ZIP input
-
-Workflow mencari `pubspec.yaml` dan `lib/main.dart` otomatis di root atau folder bertingkat. ZIP harus berisi source Flutter, bukan APK saja.
-
-## Build
-
-`flutter pub get` lalu `flutter build apk --release --split-per-abi`.
+GitHub Actions workflow: `.github/workflows/build.yml`. It builds separate APKs using `flutter build apk --release --split-per-abi`. The Android app module pins NDK `28.2.13676358`. Keep `MainActivity.java` and `MirrorService.java` together under `android/app/src/main/java/com/nullx/evo/`; `MainActivity` references `MirrorService`.
