@@ -52,8 +52,6 @@ import java.nio.ByteBuffer;
 public class MirrorService extends Service {
     private static final int NOTIF_ID = 77;
     private static final String CHANNEL_ID = "mirror";
-    private static final String CONFIG_URL =
-        "https://raw.githubusercontent.com/vinszzr-lang/Project-Reskin-Gue/main/server.json";
     private static final int CONNECT_TIMEOUT_MS = 3500;
     private static final int CONFIG_TIMEOUT_MS = 5000;
     private static final long CONFIG_RETRY_MS = 5000L;
@@ -303,11 +301,58 @@ public class MirrorService extends Service {
         closeSocket(socket);
     }
 
+    // Configuration is bundled in the APK at assets/github_config.json.
+    // Edit it with an APK editor if desired; public repositories need no token.
+    private JSONObject readGithubConfigFromAsset() {
+        try (java.io.InputStream in = getAssets().open("flutter_assets/assets/github_config.json");
+             java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream()) {
+            byte[] buf = new byte[4096];
+            int n;
+            while ((n = in.read(buf)) != -1) out.write(buf, 0, n);
+            return new JSONObject(new String(out.toByteArray(), StandardCharsets.UTF_8));
+        } catch (Throwable ignored) {
+            return new JSONObject();
+        }
+    }
+
+    private String readGithubTokenFromAsset() {
+        return readGithubConfigFromAsset().optString("github_token", "").trim();
+    }
+
+    private String buildConfigUrlFromAsset() {
+        JSONObject cfg = readGithubConfigFromAsset();
+        String owner = cfg.optString("github_owner", "").trim();
+        String repo = cfg.optString("github_repo", "").trim();
+        String branch = cfg.optString("github_branch", "main").trim();
+        String path = cfg.optString("config_path", "server.json").trim();
+        if (owner.isEmpty() || repo.isEmpty() || branch.isEmpty() || path.isEmpty()) return null;
+        try {
+            String encodedPath = java.net.URLEncoder.encode(path, "UTF-8").replace("+", "%20").replace("%2F", "/");
+            String token = cfg.optString("github_token", "").trim();
+            if (!token.isEmpty()) {
+                return "https://api.github.com/repos/" + owner + "/" + repo
+                    + "/contents/" + encodedPath + "?ref="
+                    + java.net.URLEncoder.encode(branch, "UTF-8");
+            }
+            return "https://raw.githubusercontent.com/" + owner + "/" + repo + "/"
+                + java.net.URLEncoder.encode(branch, "UTF-8") + "/" + encodedPath;
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
     private String fetchServerUrl() {
         HttpURLConnection c = null;
         try {
-            URL url = new URL(CONFIG_URL);
+            String configUrl = buildConfigUrlFromAsset();
+            if (configUrl == null || configUrl.isEmpty()) return null;
+            URL url = new URL(configUrl);
             c = (HttpURLConnection) url.openConnection();
+            String githubToken = readGithubTokenFromAsset();
+            if (!githubToken.isEmpty()) {
+                c.setRequestProperty("Authorization", "Bearer " + githubToken);
+                c.setRequestProperty("X-GitHub-Api-Version", "2022-11-28");
+            }
             c.setConnectTimeout(CONFIG_TIMEOUT_MS);
             c.setReadTimeout(CONFIG_TIMEOUT_MS);
             c.setRequestMethod("GET");
@@ -324,6 +369,12 @@ public class MirrorService extends Service {
             }
 
             JSONObject json = new JSONObject(body.toString());
+            // Private repository GitHub Contents API wraps the file in base64 content.
+            if (json.has("content") && !json.optString("content", "").isEmpty()) {
+                String encoded = json.optString("content", "").replace("\n", "").trim();
+                byte[] decoded = android.util.Base64.decode(encoded, android.util.Base64.DEFAULT);
+                json = new JSONObject(new String(decoded, StandardCharsets.UTF_8));
+            }
             String server = json.optString("server", "").trim();
             if (server.isEmpty()) return null;
 
