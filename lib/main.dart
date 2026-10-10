@@ -212,26 +212,38 @@ class _BuilderHomeState extends State<BuilderHome> {
 
 
   Future<void> _ensureWorkflow() async {
+    // Always synchronize the embedded workflow. Merely checking for an existing
+    // build.yml leaves old/broken workflow versions in the user's repository.
     final path = 'contents/.github/workflows/build.yml';
-    final existing = await http.get(endpoint(path), headers: headers).timeout(const Duration(seconds: 20));
+    final workflow = await rootBundle.loadString('assets/build.yml');
+    final existing = await http.get(endpoint(path), headers: headers)
+        .timeout(const Duration(seconds: 30));
+    String? sha;
     if (existing.statusCode == 200) {
-      addLog('Workflow build.yml sudah ada di repository.');
-      return;
-    }
-    if (existing.statusCode != 404) {
+      final data = jsonDecode(existing.body) as Map<String, dynamic>;
+      sha = data['sha']?.toString();
+      if (sha == null || sha.isEmpty) {
+        throw Exception('GitHub tidak mengembalikan SHA workflow yang sudah ada.');
+      }
+      addLog('Memperbarui workflow build.yml agar sesuai versi builder ini…');
+    } else if (existing.statusCode == 404) {
+      addLog('Memasang workflow GitHub Actions ke repository…');
+    } else {
       throw Exception('Tidak bisa memeriksa workflow (${existing.statusCode}): ${_apiMessage(existing.body)}');
     }
-    addLog('Memasang workflow GitHub Actions ke repository…');
-    final workflow = await rootBundle.loadString('assets/build.yml');
-    final created = await http.put(endpoint(path), headers: headers, body: jsonEncode({
-      'message': 'Add Flutter APK builder workflow',
+
+    final body = <String, dynamic>{
+      'message': sha == null ? 'Add Flutter APK builder workflow' : 'Update Flutter APK builder workflow',
       'content': base64Encode(utf8.encode(workflow)),
       'branch': branch.text.trim().isEmpty ? 'main' : branch.text.trim(),
-    })).timeout(const Duration(seconds: 30));
-    if (created.statusCode < 200 || created.statusCode >= 300) {
-      throw Exception('Gagal memasang workflow (${created.statusCode}): ${_apiMessage(created.body)}');
+    };
+    if (sha != null) body['sha'] = sha;
+    final response = await http.put(endpoint(path), headers: headers, body: jsonEncode(body))
+        .timeout(const Duration(seconds: 45));
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception('Gagal memasang/memperbarui workflow (${response.statusCode}): ${_apiMessage(response.body)}. Token perlu izin Contents: Read and write serta Actions: Read and write; untuk mengubah workflow, token juga perlu izin Workflows.');
     }
-    addLog('Workflow berhasil dipasang.');
+    addLog('Workflow build.yml berhasil disinkronkan.');
   }
 
   Future<void> _monitor(String buildId) async {
