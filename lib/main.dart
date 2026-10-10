@@ -185,16 +185,16 @@ class _BuilderHomeState extends State<BuilderHome> {
       addLog('Source terunggah. Memulai GitHub Actions…');
       if (mounted) setState(() { phase = 'Memulai workflow'; progress = 0.12; status = 'Memulai build di GitHub…'; });
       http.Response? dispatch;
-      for (var attempt = 0; attempt < 3; attempt++) {
+      for (var attempt = 0; attempt < 8; attempt++) {
         dispatch = await http.post(
           endpoint('actions/workflows/build.yml/dispatches'),
           headers: headers,
           body: jsonEncode({'ref': branch.text.trim().isEmpty ? 'main' : branch.text.trim(), 'inputs': {'source_path': inputPath, 'build_id': buildId}}),
         ).timeout(const Duration(seconds: 45));
         if (dispatch.statusCode == 204 || dispatch.statusCode == 200) break;
-        if (attempt < 2 && (dispatch.statusCode == 404 || dispatch.statusCode == 422)) {
-          addLog('GitHub sedang mendaftarkan workflow; mencoba lagi…');
-          await Future<void>.delayed(const Duration(seconds: 4));
+        if (attempt < 7 && (dispatch.statusCode == 404 || dispatch.statusCode == 422)) {
+          addLog('Workflow belum terdaftar di GitHub (percobaan ${attempt + 1}/8); menunggu lalu mencoba lagi…');
+          await Future<void>.delayed(const Duration(seconds: 5));
         } else break;
       }
       if (dispatch == null || (dispatch.statusCode != 204 && dispatch.statusCode != 200)) {
@@ -212,26 +212,52 @@ class _BuilderHomeState extends State<BuilderHome> {
 
 
   Future<void> _ensureWorkflow() async {
-    final path = 'contents/.github/workflows/build.yml';
-    final existing = await http.get(endpoint(path), headers: headers).timeout(const Duration(seconds: 20));
+    // GitHub Actions only discovers workflows from .github/workflows/ (plural).
+    // Always query the selected branch and repair a missing/stale workflow before dispatch.
+    final selectedBranch = branch.text.trim().isEmpty ? 'main' : branch.text.trim();
+    const filePath = '.github/workflows/build.yml';
+    final contentPath = 'contents/$filePath?ref=${Uri.encodeComponent(selectedBranch)}';
+    final expectedWorkflow = await rootBundle.loadString('assets/build.yml');
+    final existing = await http.get(endpoint(contentPath), headers: headers).timeout(const Duration(seconds: 25));
+    String? existingSha;
+    var needsWrite = false;
     if (existing.statusCode == 200) {
-      addLog('Workflow build.yml sudah ada di repository.');
-      return;
-    }
-    if (existing.statusCode != 404) {
+      try {
+        final data = jsonDecode(existing.body) as Map<String, dynamic>;
+        existingSha = '${data['sha'] ?? ''}';
+        final currentText = utf8.decode(base64Decode((data['content'] as String).replaceAll('\n', '')));
+        final looksRunnable = currentText.contains('workflow_dispatch:') &&
+            currentText.contains('source_path:') && currentText.contains('build_id:');
+        if (looksRunnable) {
+          addLog('Workflow valid ditemukan di .github/workflows/build.yml.');
+          return;
+        }
+        addLog('Workflow lama tidak cocok; memperbarui build.yml…');
+        needsWrite = true;
+      } catch (_) {
+        addLog('Workflow ada tetapi tidak dapat diverifikasi; mencoba memperbarui…');
+        needsWrite = true;
+      }
+    } else if (existing.statusCode == 404) {
+      addLog('Workflow belum ada. Memasang .github/workflows/build.yml…');
+      needsWrite = true;
+    } else {
       throw Exception('Tidak bisa memeriksa workflow (${existing.statusCode}): ${_apiMessage(existing.body)}');
     }
-    addLog('Memasang workflow GitHub Actions ke repository…');
-    final workflow = await rootBundle.loadString('assets/build.yml');
-    final created = await http.put(endpoint(path), headers: headers, body: jsonEncode({
-      'message': 'Add Flutter APK builder workflow',
-      'content': base64Encode(utf8.encode(workflow)),
-      'branch': branch.text.trim().isEmpty ? 'main' : branch.text.trim(),
-    })).timeout(const Duration(seconds: 30));
-    if (created.statusCode < 200 || created.statusCode >= 300) {
-      throw Exception('Gagal memasang workflow (${created.statusCode}): ${_apiMessage(created.body)}');
+    if (!needsWrite) return;
+    final body = <String, dynamic>{
+      'message': 'Install or repair Flutter APK builder workflow',
+      'content': base64Encode(utf8.encode(expectedWorkflow)),
+      'branch': selectedBranch,
+    };
+    if (existingSha != null && existingSha.isNotEmpty) body['sha'] = existingSha;
+    final written = await http.put(endpoint('contents/$filePath'), headers: headers, body: jsonEncode(body))
+        .timeout(const Duration(seconds: 35));
+    if (written.statusCode < 200 || written.statusCode >= 300) {
+      throw Exception('Gagal memasang workflow di .github/workflows/build.yml (${written.statusCode}): ${_apiMessage(written.body)}');
     }
-    addLog('Workflow berhasil dipasang.');
+    addLog('Workflow disimpan di .github/workflows/build.yml. Menunggu GitHub mendaftarkannya…');
+    await Future<void>.delayed(const Duration(seconds: 5));
   }
 
   Future<void> _monitor(String buildId) async {

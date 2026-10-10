@@ -2,15 +2,21 @@ name: Build Flutter APK
 run-name: Mobile build ${{ inputs.build_id }}
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'build-inputs/*.zip'
+      - '.github/workflows/build.yml'
   workflow_dispatch:
     inputs:
       source_path:
-        description: 'Repository path of uploaded source ZIP'
-        required: true
+        description: 'Repository path of uploaded source ZIP (leave empty to use newest ZIP on push)'
+        required: false
         type: string
       build_id:
-        description: 'Unique build identifier'
-        required: true
+        description: 'Unique build identifier (optional)'
+        required: false
         type: string
 
 permissions:
@@ -33,10 +39,15 @@ jobs:
         env:
           SOURCE_PATH: ${{ inputs.source_path }}
           BUILD_ID: ${{ inputs.build_id }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
+          if [[ -z "$SOURCE_PATH" && "$EVENT_NAME" == 'push' ]]; then
+            SOURCE_PATH="$(find build-inputs -maxdepth 1 -type f -name '*.zip' -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2-)"
+          fi
+          if [[ -z "$BUILD_ID" ]]; then BUILD_ID="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"; fi
           if [[ "$SOURCE_PATH" != build-inputs/*.zip || "$SOURCE_PATH" == *..* ]]; then
-            echo 'Invalid source ZIP path. Expected build-inputs/*.zip.' | tee build-error.log
+            echo 'Invalid or missing source ZIP path. Expected build-inputs/*.zip.' | tee build-error.log
             exit 1
           fi
           if [[ ! -f "$GITHUB_WORKSPACE/$SOURCE_PATH" ]]; then

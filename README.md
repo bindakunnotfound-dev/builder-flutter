@@ -1,55 +1,25 @@
 # Flutter Cloud Builder (build.yml)
 
-Aplikasi Flutter Android untuk mengirim ZIP proyek Flutter ke repository GitHub, menjalankan GitHub Actions melalui workflow `.github/workflows/build.yml`, memantau build, lalu mengunduh APK atau ZIP diagnostik.
+Aplikasi Flutter Android untuk mengunggah ZIP proyek ke GitHub, memicu GitHub Actions, memantau run, dan mengambil APK/artifact diagnostik.
+
+## Workflow
+
+Workflow canonical: `.github/workflows/build.yml` (folder `workflows` wajib plural).
+
+Pemicu:
+- `workflow_dispatch`: dipanggil aplikasi dengan `source_path` dan `build_id`.
+- `push` ke branch `main` jika ZIP baru masuk ke `build-inputs/*.zip`; workflow akan memilih ZIP terbaru jika input tidak diberikan.
 
 ## Konfigurasi
 
-File `assets/github_config.json` sudah diset ke repository yang diberikan:
+Edit `assets/github_config.json` sebelum build APK untuk owner/repository/branch. Token tidak diisi di repository. APK membaca token dari aset JSON saat runtime, jadi jika mengedit APK melalui MT Manager setelah build, sign ulang APK sebelum instalasi. Token di APK dapat diekstrak; gunakan token berumur pendek dengan izin repository minimum.
 
-```json
-{
-  "github_owner": "bindakunnotfound-dev",
-  "github_repo": "builder-flutter",
-  "github_branch": "main",
-  "github_token": ""
-}
-```
+Token untuk API perlu izin Contents: Read and write serta Actions: Read and write (dan Workflows: write jika mengubah file workflow melalui API).
 
-Build APK Cloud Builder dengan token tetap kosong. Setelah APK selesai dibangun, jika tetap memilih metode MT Manager, edit `assets/flutter_assets/assets/github_config.json` di dalam APK, isi token, simpan, lalu sign ulang APK. Token di dalam APK dapat diekstrak; jangan bagikan APK tersebut dan gunakan token dengan izin minimum. Cabut token jika pernah terunggah ke repository atau terbagikan.
+## ZIP input
 
-Fine-grained PAT untuk cara ini perlu akses ke repository `builder-flutter`: **Contents: Read and write** serta **Actions: Read and write**. Workflow di repository perlu diizinkan pada tab Actions.
+Workflow mencari `pubspec.yaml` dan `lib/main.dart` otomatis di root atau folder bertingkat. ZIP harus berisi source Flutter, bukan APK saja.
 
-## Cara kerja
+## Build
 
-1. Pilih ZIP source Flutter.
-2. Aplikasi menyimpan ZIP sementara ke `build-inputs/` melalui GitHub Contents API (bukan `git push` lokal).
-3. Jika `.github/workflows/build.yml` belum ada, aplikasi memasangnya melalui Contents API.
-4. Aplikasi memanggil `workflow_dispatch` pada `build.yml`, lalu memantau run.
-5. Workflow mencari otomatis folder yang memiliki `pubspec.yaml` dan `lib/main.dart`, baik di root ZIP maupun di dalam folder bertingkat.
-6. Workflow menjalankan `flutter pub get` dan `flutter build apk --release --split-per-abi`.
-7. APK diunggah sebagai artifact `flutter-release-apks`. Jika gagal, workflow mencoba mengunggah `flutter-build-diagnostics`.
-
-## ZIP yang didukung
-
-```text
-project.zip
-├── pubspec.yaml
-├── lib/main.dart
-└── android/...
-```
-
-atau:
-
-```text
-project.zip
-└── nama-folder/
-    ├── pubspec.yaml
-    ├── lib/main.dart
-    └── android/...
-```
-
-atau proyek di folder yang lebih dalam. ZIP harus berisi source Flutter, bukan hanya APK.
-
-## Build aplikasi Cloud Builder
-
-Jalankan `flutter pub get`, lalu `flutter build apk --release`. Build workflow ini sendiri berlangsung di GitHub Actions. ZIP ini adalah source project, bukan APK yang sudah dikompilasi dan diverifikasi di perangkat.
+`flutter pub get` lalu `flutter build apk --release --split-per-abi`.
